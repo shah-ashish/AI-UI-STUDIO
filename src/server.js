@@ -51,11 +51,13 @@ loadTools(['web_search', 'url_scraper']).then((loaded) => {
 
 // Helper: Setup SSE Headers
 function setupSSE(res) {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx/proxy buffering
-  res.flushHeaders?.();
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(': connected\n\n');
 }
 
 function sendSSE(res, data) {
@@ -182,12 +184,24 @@ app.post('/api/chat', async (req, res) => {
     return res.status(400).json({ error: 'Message is required.' });
   }
 
+  // Disable socket timeouts for this long-running streaming response
+  req.socket?.setTimeout(0);
+  res.socket?.setTimeout(0);
+
   setupSSE(res);
+
+  // Send keepalive comment every 5s so reverse proxies (Localtunnel, Pinggy) never 408 timeout
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': keepalive\n\n');
+    } catch (_) {}
+  }, 5000);
 
   const abortController = new AbortController();
   activeChatControllers.set(sessionId, abortController);
 
   req.on('close', () => {
+    clearInterval(heartbeat);
     abortController.abort();
     activeChatControllers.delete(sessionId);
   });
@@ -200,9 +214,11 @@ app.post('/api/chat', async (req, res) => {
       sendEvent: (data) => sendSSE(res, data),
       abortSignal: abortController.signal,
     });
+    clearInterval(heartbeat);
     activeChatControllers.delete(sessionId);
     res.end();
   } catch (error) {
+    clearInterval(heartbeat);
     activeChatControllers.delete(sessionId);
     if (abortController.signal.aborted) {
       console.log(`[Chat] Session ${sessionId} generation aborted by user.`);
