@@ -83,7 +83,7 @@ export function initDatabase() {
 // Generate a clean human-readable title from prompt
 export function deriveTitleFromPrompt(prompt) {
   if (!prompt) return 'Untitled Project';
-  const clean = prompt.replace(/^(I want to build|create|design|build|make)\s+(a|an)?\s*/i, '').trim();
+  const clean = prompt.replace(/^(I want to build|create|design|build|make)\s+(an|a)?\s*/i, '').trim();
   const title = clean.charAt(0).toUpperCase() + clean.slice(1);
   return title.length > 50 ? title.substring(0, 47) + '...' : title;
 }

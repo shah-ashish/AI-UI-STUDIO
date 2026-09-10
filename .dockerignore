@@ -1,0 +1,13 @@
+node_modules
+frontend/node_modules
+frontend/dist
+data/*.db*
+data/*.sqlite*
+output/*
+.git
+.github
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db

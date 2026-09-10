@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node index.js",
     "server": "node src/server.js",
-    "test": "node tests/test_run.js"
+    "build:frontend": "cd frontend && npm install && npm run build",
+    "test": "node --test tests/**/*.test.js",
+    "test:integration": "node tests/test_run.js"
   },
   "keywords": [],
   "author": "Ashish Kumar shah",
