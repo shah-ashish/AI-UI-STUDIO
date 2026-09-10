@@ -8,7 +8,11 @@
 export async function consumeSSEStream(url, body, { onToken, onStatus, onMilestone, onArtifact, onDone, onError, signal }) {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Bypass-Tunnel-Reminder': 'true',
+      'ngrok-skip-browser-warning': 'true',
+    },
     body: JSON.stringify(body),
     signal,
   });
