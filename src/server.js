@@ -17,12 +17,15 @@ import {
 import {
   listProjects,
   getProject,
+  getProjectMessages,
   saveProjectResearch,
   saveProjectDesignPlan,
   saveProjectHtmlCode,
+  syncProjectState,
   recordProjectFeedback,
   deleteProject,
 } from './core/db.js';
+import { handleChatTurn } from './core/chat_orchestrator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,9 +44,9 @@ app.use(express.json({ limit: '10mb' }));
 
 // Loaded tools singleton
 let tools = {};
-loadTools(['web_search']).then((loaded) => {
+loadTools(['web_search', 'url_scraper']).then((loaded) => {
   tools = loaded;
-  console.log('🔧 [Server] Tools loaded successfully.');
+  console.log('🔧 [Server] Tools loaded successfully:', Object.keys(tools).join(', '));
 });
 
 // Helper: Setup SSE Headers
@@ -132,6 +135,96 @@ app.delete('/api/projects/:id', (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Sync project draft state to SQLite
+app.post('/api/projects/:id/sync', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { prompt, research, designPlan, htmlCode, status, researchTokens, designTokens, codeTokens } = req.body;
+    syncProjectState(id, {
+      prompt,
+      research,
+      designPlan,
+      htmlCode,
+      status,
+      researchTokens: researchTokens || 0,
+      designTokens: designTokens || 0,
+      codeTokens: codeTokens || 0,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all chat messages for a project
+app.get('/api/projects/:id/messages', (req, res) => {
+  try {
+    const messages = getProjectMessages(req.params.id);
+    res.json({ messages });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Active chat controllers for cancellation/stop
+const activeChatControllers = new Map();
+
+// -------------------------------------------------------------
+// CHAT WORKSPACE PIPELINE (SSE Streaming)
+// Runs background stages, streams execution milestones & artifacts
+// -------------------------------------------------------------
+app.post('/api/chat', async (req, res) => {
+  const { sessionId = 'default', message } = req.body;
+
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Message is required.' });
+  }
+
+  setupSSE(res);
+
+  const abortController = new AbortController();
+  activeChatControllers.set(sessionId, abortController);
+
+  req.on('close', () => {
+    abortController.abort();
+    activeChatControllers.delete(sessionId);
+  });
+
+  try {
+    await handleChatTurn({
+      projectId: sessionId,
+      message: message.trim(),
+      tools,
+      sendEvent: (data) => sendSSE(res, data),
+      abortSignal: abortController.signal,
+    });
+    activeChatControllers.delete(sessionId);
+    res.end();
+  } catch (error) {
+    activeChatControllers.delete(sessionId);
+    if (abortController.signal.aborted) {
+      console.log(`[Chat] Session ${sessionId} generation aborted by user.`);
+    } else {
+      console.error('Chat endpoint error:', error);
+      sendSSE(res, { type: 'error', error: error.message });
+    }
+    res.end();
+  }
+});
+
+// Explicit stop endpoint to cancel background model execution
+app.post('/api/chat/stop', (req, res) => {
+  const { sessionId = 'default' } = req.body;
+  const controller = activeChatControllers.get(sessionId);
+  if (controller) {
+    controller.abort();
+    activeChatControllers.delete(sessionId);
+    console.log(`🛑 [Server] Aborted model execution for session: ${sessionId}`);
+    return res.json({ success: true, message: 'Generation stopped' });
+  }
+  res.json({ success: true, message: 'No active generation found' });
 });
 
 // -------------------------------------------------------------
@@ -274,6 +367,14 @@ app.post('/api/design-plan', async (req, res) => {
   setupSSE(res);
   sendSSE(res, { type: 'status', message: 'Formulating bespoke color palette, fonts & section layouts...' });
 
+  // Mark project status as designing immediately
+  saveProjectDesignPlan(sessionId, {
+    prompt,
+    research,
+    designPlan: '',
+    status: 'designing',
+  });
+
   try {
     const skillPrompt = loadSkill('ui-design-plan');
     const stageInput = `User Request:\n"${prompt}"\n\nAccepted Discovery & Research Findings:\n${research}\n\nPlease formulate the custom Web UI Design Plan:`;
@@ -291,6 +392,8 @@ app.post('/api/design-plan', async (req, res) => {
     addTokens(sessionId, 'design', tokensUsed);
 
     saveProjectDesignPlan(sessionId, {
+      prompt,
+      research,
       designPlan: result,
       tokens: getSessionUsage(sessionId).design.used,
       status: 'design_ready',
@@ -379,6 +482,15 @@ app.post('/api/code-gen', async (req, res) => {
 
   setupSSE(res);
   sendSSE(res, { type: 'status', message: 'Generating production-ready HTML5 + Tailwind CSS code...' });
+
+  // Ensure design plan and research are committed to SQLite before generating code
+  saveProjectDesignPlan(sessionId, {
+    prompt,
+    research,
+    designPlan,
+    tokens: getSessionUsage(sessionId).design.used,
+    status: 'generating_code',
+  });
 
   try {
     const skillPrompt = loadSkill('ui-code-generator');
@@ -505,6 +617,21 @@ app.get('/api/preview/:sessionId', (req, res) => {
 
   res.send('<html><body><h2>No preview generated yet.</h2></body></html>');
 });
+
+// -------------------------------------------------------------
+// 7. Serve Static Frontend (Vite Production Build)
+// -------------------------------------------------------------
+const FRONTEND_DIST = path.join(ROOT_DIR, 'frontend', 'dist');
+if (fs.existsSync(FRONTEND_DIST)) {
+  app.use(express.static(FRONTEND_DIST));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      return next();
+    }
+    res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
+  });
+  console.log(`📦 [Server] Frontend static bundle served from: ${FRONTEND_DIST}`);
+}
 
 // Start Express Server
 app.listen(PORT, () => {

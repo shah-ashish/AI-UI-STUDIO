@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -e
+
+# ==============================================================================
+# AI UI STUDIO - Unified Deployment & Cloudflare Runner
+# Serves both Frontend & Backend on Port 5000 and tunnels via Cloudflare
+# ==============================================================================
+
+MODEL_NAME="${1:-qwen3.8:27b}"
+PORT=5000
+
+echo -e "\n=================================================="
+echo -e "🚀 Launching AI UI STUDIO"
+echo -e "Target Model: ${MODEL_NAME}"
+echo -e "==================================================\n"
+
+# -------------------------------------------------------------
+# 1. Pull Latest Code from Repository
+# -------------------------------------------------------------
+if [ -d ".git" ]; then
+  echo "--- [1/7] Pulling Latest Repository Updates ---"
+  git pull origin main || echo "⚠️ Git pull failed or offline, continuing with local code..."
+fi
+
+# -------------------------------------------------------------
+# 2. Install System Dependencies & Puppeteer Libraries (Linux)
+# -------------------------------------------------------------
+echo "--- [2/7] Installing System Utilities & Chromium Dependencies ---"
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq zstd curl python3 git \
+    ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \
+    libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 \
+    libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 \
+    libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
+    libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
+    libxss1 libxtst6 lsb-release xdg-utils > /dev/null 2>&1 || true
+fi
+
+# -------------------------------------------------------------
+# 3. Install & Start Ollama
+# -------------------------------------------------------------
+echo "--- [3/7] Setting up Ollama Server ---"
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "Downloading Ollama Linux binary..."
+  curl -L https://ollama.com/download/ollama-linux-amd64.tar.zst | sudo tar --zstd -x -C /usr/local
+fi
+
+pkill -f "ollama serve" || true
+sleep 1
+
+export OLLAMA_ORIGINS="*"
+export OLLAMA_HOST="0.0.0.0"
+
+ollama serve > /dev/null 2>&1 &
+sleep 3
+ollama --version
+
+# -------------------------------------------------------------
+# 4. Pull Target Model with Progress Bar
+# -------------------------------------------------------------
+echo "--- [4/7] Pulling Model: ${MODEL_NAME} ---"
+python3 -u -c "
+import urllib.request, json, sys
+
+model = sys.argv[1]
+req = urllib.request.Request(
+    'http://localhost:11434/api/pull',
+    data=json.dumps({'name': model}).encode(),
+    headers={'Content-Type': 'application/json'}
+)
+
+last_pct = -1
+last_status = ''
+try:
+    with urllib.request.urlopen(req) as resp:
+        for line in resp:
+            if not line.strip():
+                continue
+            d = json.loads(line.decode())
+            status = d.get('status', '')
+            total = d.get('total', 0)
+            completed = d.get('completed', 0)
+            if total > 0:
+                pct = int((completed / total) * 100)
+                if pct != last_pct:
+                    mb_done = completed // (1024 * 1024)
+                    mb_tot = total // (1024 * 1024)
+                    sys.stdout.write(f'\r\033[K[Ollama] {status} {pct}% ({mb_done}/{mb_tot} MB)')
+                    sys.stdout.flush()
+                    last_pct = pct
+            else:
+                if status != last_status:
+                    sys.stdout.write(f'\r\033[K[Ollama] {status}\n')
+                    sys.stdout.flush()
+                    last_status = status
+    print(f'\r\033[K[Ollama] Model {model} downloaded successfully!\n')
+except Exception as e:
+    sys.exit(1)
+" "${MODEL_NAME}" || ollama pull "${MODEL_NAME}"
+
+# -------------------------------------------------------------
+# 5. Node.js & Project Setup (Backend + Frontend Build)
+# -------------------------------------------------------------
+echo "--- [5/7] Preparing Backend & Frontend Application ---"
+
+# Install Node.js v20 if missing
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js not found. Installing Node.js LTS..."
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+fi
+
+echo "Installing root backend dependencies..."
+npm install --silent
+
+echo "Building frontend static assets..."
+if [ -d "frontend" ]; then
+  cd frontend
+  npm install --silent
+  npm run build
+  cd ..
+fi
+
+# Configure .env with default Ollama port on localhost
+echo "Configuring .env file..."
+cat <<EOF > .env
+PORT=${PORT}
+BASE_URL=http://localhost:11434
+MODEL_NAME=${MODEL_NAME}
+TIMEOUT=1200
+EOF
+
+# -------------------------------------------------------------
+# 6. Start Unified Server (Serves Frontend + Backend API on :5000)
+# -------------------------------------------------------------
+echo "--- [6/7] Starting Backend Server on port ${PORT} ---"
+pkill -f "node src/server.js" || true
+sleep 1
+
+node src/server.js > server.log 2>&1 &
+sleep 2
+
+# Verify server is responding
+if curl -s "http://localhost:${PORT}/api/health" > /dev/null; then
+  echo "✓ AI UI STUDIO server running locally on http://localhost:${PORT}"
+else
+  echo "⚠️ Warning: Health check did not respond immediately. Check server.log if issues occur."
+fi
+
+# -------------------------------------------------------------
+# 7. Install Cloudflared & Tunnel Port 5000 (Unified URL)
+# -------------------------------------------------------------
+echo "--- [7/7] Starting Cloudflared Tunnel for AI UI STUDIO ---"
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "Installing Cloudflared..."
+  curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+  sudo dpkg -i cloudflared.deb > /dev/null 2>&1 || true
+  rm -f cloudflared.deb
+fi
+
+pkill -f "cloudflared tunnel" || true
+sleep 1
+
+echo -e "\n=================================================="
+echo -e "Connecting to Cloudflare network..."
+echo -e "==================================================\n"
+
+# Launch Cloudflare tunnel for Port 5000 and capture the public URL
+cloudflared tunnel --url "http://localhost:${PORT}" 2>&1 | while read -r line; do
+  echo "$line"
+  if [[ "$line" =~ https://[a-zA-Z0-9-]+\.trycloudflare\.com ]]; then
+    echo -e "\n"
+    echo -e "****************************************************************"
+    echo -e "🎉 AI UI STUDIO IS LIVE ONLINE!"
+    echo -e "Open this URL in any browser:"
+    echo -e "👉 ${BASH_REMATCH[0]}"
+    echo -e "****************************************************************"
+    echo -e "\n"
+  fi
+done

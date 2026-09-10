@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowRight, FolderOpen } from 'lucide-react';
 import { SAMPLE_PROMPTS } from '../../constants/prompts';
+import Logo from '../Common/Logo';
 
 export default function PromptIntake({ prompt, setPrompt, onStartResearch, streaming, onOpenHistory }) {
   const charCount = prompt.length;
@@ -28,8 +29,13 @@ export default function PromptIntake({ prompt, setPrompt, onStartResearch, strea
         </button>
       </div>
 
+      {/* Brand Logo Emblem */}
+      <div className="mb-4">
+        <Logo size="lg" />
+      </div>
+
       {/* Badge */}
-      <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-slate-200 bg-white/80 text-slate-500 text-xs font-mono tracking-widest mb-6 shadow-sm">
+      <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-slate-200 bg-white/80 text-slate-500 text-xs font-mono tracking-widest mb-4 shadow-sm">
         <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
         NEURAL WORKSPACE V4.2
       </div>

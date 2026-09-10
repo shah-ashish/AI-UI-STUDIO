@@ -22,6 +22,9 @@ export default function DesignStageView({
   prompt,
   sessionId,
 }) {
+  const isReview = step === STEPS.DESIGN_REVIEW;
+  const isComplete = Boolean(!streaming && isReview);
+
   const tokenEstimate = useMemo(() => {
     if (!designPlan) return 0;
     return Math.round(designPlan.length / 4);

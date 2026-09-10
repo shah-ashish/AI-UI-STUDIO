@@ -1,5 +1,6 @@
 import React from 'react';
 import { RotateCcw, FolderOpen } from 'lucide-react';
+import Logo from '../Common/Logo';
 
 export default function Header({ step, onReset, statusLabel, onOpenHistory }) {
   const handleResetClick = () => {
@@ -11,18 +12,18 @@ export default function Header({ step, onReset, statusLabel, onOpenHistory }) {
   return (
     <header className="border-b border-slate-200 bg-white/90 backdrop-blur-md sticky top-0 z-50 px-6 py-3">
       <div className="max-w-[1400px] mx-auto flex items-center justify-between gap-4">
-        {/* Left: Status badge + Title */}
-        <div className="flex items-center gap-4">
+        {/* Left: Logo + Title + Status badge */}
+        <div className="flex items-center gap-3.5">
+          <Logo size="sm" />
+          <h1 className="font-extrabold text-lg tracking-tight text-slate-900">
+            AI UI STUDIO
+          </h1>
+
           {/* Status Badge */}
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-500 text-[11px] font-mono tracking-widest">
             <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
             {statusLabel || 'NEURAL WORKSPACE V4.2'}
           </div>
-
-          {/* Title */}
-          <h1 className="font-extrabold text-xl tracking-tight text-slate-900">
-            AI UI STUDIO
-          </h1>
         </div>
 
         {/* Right Actions: Projects Drawer & New Project */}

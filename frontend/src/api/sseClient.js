@@ -5,11 +5,12 @@
  * @param {object} body - Request JSON body
  * @param {object} callbacks - { onToken, onStatus, onDone, onError }
  */
-export async function consumeSSEStream(url, body, { onToken, onStatus, onDone, onError }) {
+export async function consumeSSEStream(url, body, { onToken, onStatus, onMilestone, onArtifact, onDone, onError, signal }) {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -53,7 +54,13 @@ export async function consumeSSEStream(url, body, { onToken, onStatus, onDone, o
       try {
         const event = JSON.parse(dataLines);
         if (event.type === 'token') {
-          if (onToken) onToken(event.text);
+          if (onToken) onToken(event.text, event.stage);
+        } else if (event.type === 'code_token') {
+          if (onToken) onToken(event.text, 'code');
+        } else if (event.type === 'milestone') {
+          if (onMilestone) onMilestone(event.milestone, event.milestones);
+        } else if (event.type === 'artifact') {
+          if (onArtifact) onArtifact(event.artifact);
         } else if (event.type === 'status' || event.type === 'tool' || event.type === 'tool_done') {
           if (onStatus) onStatus(event.message || event.query);
         } else if (event.type === 'done') {

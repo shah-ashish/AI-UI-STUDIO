@@ -2,16 +2,38 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { API_BASE, STEPS } from '../constants/prompts';
 import { consumeSSEStream } from '../api/sseClient';
 import { useTokenUsage } from './useTokenUsage';
+import { fetchProjectById } from '../api/studioApi';
+
+const STORAGE_SESSION_KEY = 'ai_ui_studio_active_session_id';
+const STORAGE_DRAFT_KEY = 'ai_ui_studio_active_draft';
+
+function getInitialDraft() {
+  try {
+    const raw = localStorage.getItem(STORAGE_DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 export function usePipelineStream() {
-  const [sessionId, setSessionId] = useState(() => 'sess_' + Math.random().toString(36).substring(2, 9));
-  const [step, setStep] = useState(STEPS.PROMPT);
-  const [prompt, setPrompt] = useState('');
+  const initialDraft = getInitialDraft();
+
+  const [sessionId, setSessionId] = useState(() => {
+    return (
+      localStorage.getItem(STORAGE_SESSION_KEY) ||
+      initialDraft?.sessionId ||
+      'sess_' + Math.random().toString(36).substring(2, 9)
+    );
+  });
+
+  const [step, setStep] = useState(() => initialDraft?.step || STEPS.PROMPT);
+  const [prompt, setPrompt] = useState(() => initialDraft?.prompt || '');
 
   // Data artifacts
-  const [research, setResearch] = useState('');
-  const [designPlan, setDesignPlan] = useState('');
-  const [htmlCode, setHtmlCode] = useState('');
+  const [research, setResearch] = useState(() => initialDraft?.research || '');
+  const [designPlan, setDesignPlan] = useState(() => initialDraft?.designPlan || '');
+  const [htmlCode, setHtmlCode] = useState(() => initialDraft?.htmlCode || '');
   const [previewKey, setPreviewKey] = useState(0);
 
   // Status & Streaming flags
@@ -23,6 +45,69 @@ export function usePipelineStream() {
   const { usage, refreshUsage, updateUsageDirectly, resetUsage } = useTokenUsage(sessionId);
 
   const streamEndRef = useRef(null);
+
+  // Persist current session & draft state in localStorage so refresh never loses work
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem(STORAGE_SESSION_KEY, sessionId);
+    }
+    localStorage.setItem(
+      STORAGE_DRAFT_KEY,
+      JSON.stringify({
+        sessionId,
+        step,
+        prompt,
+        research,
+        designPlan,
+        htmlCode,
+      })
+    );
+  }, [sessionId, step, prompt, research, designPlan, htmlCode]);
+
+  // On mount: cross-check with SQLite database to restore complete artifacts
+  useEffect(() => {
+    const savedSession = localStorage.getItem(STORAGE_SESSION_KEY);
+    if (!savedSession) return;
+
+    fetchProjectById(savedSession)
+      .then((project) => {
+        if (!project) return;
+        if (project.prompt) setPrompt((p) => p || project.prompt);
+        if (project.research) setResearch((r) => r || project.research);
+        if (project.design_plan) setDesignPlan((d) => d || project.design_plan);
+        if (project.html_code) {
+          setHtmlCode((h) => h || project.html_code);
+          setStep(STEPS.STUDIO);
+        } else if (project.design_plan) {
+          setStep((s) => (s < STEPS.DESIGN_STREAM ? STEPS.DESIGN_REVIEW : s));
+        } else if (project.research) {
+          setStep((s) => (s < STEPS.RESEARCH_STREAM ? STEPS.RESEARCH_REVIEW : s));
+        }
+
+        // Restore tokens if present
+        const researchUsed = project.research_tokens || 0;
+        const designUsed = project.design_tokens || 0;
+        const codeUsed = project.code_tokens || 0;
+        if (researchUsed > 0 || designUsed > 0 || codeUsed > 0) {
+          updateUsageDirectly({
+            research: {
+              used: researchUsed,
+              max: 10000,
+              percentage: (researchUsed / 10000) * 100,
+              remaining: Math.max(0, 10000 - researchUsed),
+            },
+            design: {
+              used: designUsed,
+              max: 10000,
+              percentage: (designUsed / 10000) * 100,
+              remaining: Math.max(0, 10000 - designUsed),
+            },
+            code: { used: codeUsed },
+          });
+        }
+      })
+      .catch(() => {});
+  }, [updateUsageDirectly]);
 
   // Refresh token usage on step transitions
   useEffect(() => {
@@ -78,7 +163,7 @@ export function usePipelineStream() {
     setStreaming(true);
     const prevResearch = research;
     setResearch('');
-    setStatusMessage('Refining research with your feedback...');
+    setStatusMessage('Refining research based on your feedback...');
 
     try {
       await consumeSSEStream(
@@ -328,7 +413,10 @@ export function usePipelineStream() {
 
   const resetAll = useCallback(async () => {
     await resetUsage();
-    setSessionId('sess_' + Math.random().toString(36).substring(2, 9));
+    localStorage.removeItem(STORAGE_SESSION_KEY);
+    localStorage.removeItem(STORAGE_DRAFT_KEY);
+    const newId = 'sess_' + Math.random().toString(36).substring(2, 9);
+    setSessionId(newId);
     setPrompt('');
     setResearch('');
     setDesignPlan('');
