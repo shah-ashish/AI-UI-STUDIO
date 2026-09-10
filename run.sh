@@ -15,11 +15,23 @@ echo -e "Target Model: ${MODEL_NAME}"
 echo -e "==================================================\n"
 
 # -------------------------------------------------------------
-# 1. Pull Latest Code from Repository
+# 1. Ensure Repository is Cloned & Up to Date
 # -------------------------------------------------------------
+echo "--- [1/7] Setting up AI-UI-STUDIO Repository ---"
+if [ ! -f "src/server.js" ]; then
+  if [ -d "AI-UI-STUDIO" ]; then
+    echo "Entering AI-UI-STUDIO directory..."
+    cd AI-UI-STUDIO
+  else
+    echo "Cloning repository from GitHub..."
+    git clone https://github.com/shah-ashish/AI-UI-STUDIO.git
+    cd AI-UI-STUDIO
+  fi
+fi
+
 if [ -d ".git" ]; then
-  echo "--- [1/7] Pulling Latest Repository Updates ---"
-  git pull origin main || echo "⚠️ Git pull failed or offline, continuing with local code..."
+  echo "Pulling latest repository updates..."
+  git pull origin main || echo "⚠️ Git pull skipped, using local copy."
 fi
 
 # -------------------------------------------------------------
@@ -111,13 +123,13 @@ if ! command -v node >/dev/null 2>&1; then
   sudo apt-get install -y nodejs
 fi
 
-echo "Installing root backend dependencies..."
-npm install --silent
+echo "Installing root backend dependencies (Express, Puppeteer, SQLite)..."
+npm install --no-audit --no-fund
 
-echo "Building frontend static assets..."
+echo "Building frontend static assets (React + Vite)..."
 if [ -d "frontend" ]; then
   cd frontend
-  npm install --silent
+  npm install --no-audit --no-fund
   npm run build
   cd ..
 fi
