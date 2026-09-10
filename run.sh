@@ -116,12 +116,18 @@ except Exception as e:
 # -------------------------------------------------------------
 echo "--- [5/7] Preparing Backend & Frontend Application ---"
 
-# Install Node.js v20 if missing
-if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js not found. Installing Node.js LTS..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Ensure Node.js v22+ is installed (required by better-sqlite3 v13 and Puppeteer v25)
+NODE_MAJOR=0
+if command -v node >/dev/null 2>&1; then
+  NODE_MAJOR=$(node -v | sed 's/v//' | cut -d'.' -f1)
+fi
+
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  echo "Node.js v${NODE_MAJOR} detected. Upgrading to Node.js v22 LTS..."
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
   sudo apt-get install -y nodejs
 fi
+echo "Node.js runtime: $(node -v) (npm $(npm -v))"
 
 echo "Installing root backend dependencies (Express, Puppeteer, SQLite)..."
 npm install --no-audit --no-fund
@@ -151,13 +157,14 @@ pkill -f "node src/server.js" || true
 sleep 1
 
 node src/server.js > server.log 2>&1 &
-sleep 2
+sleep 3
 
 # Verify server is responding
 if curl -s "http://localhost:${PORT}/api/health" > /dev/null; then
-  echo "✓ AI UI STUDIO server running locally on http://localhost:${PORT}"
+  echo "✓ AI UI STUDIO server running successfully on http://localhost:${PORT}"
 else
-  echo "⚠️ Warning: Health check did not respond immediately. Check server.log if issues occur."
+  echo "⚠️ Warning: Server health check failed. Output from server.log:"
+  cat server.log || true
 fi
 
 # -------------------------------------------------------------
