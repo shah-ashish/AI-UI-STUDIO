@@ -168,41 +168,64 @@ else
 fi
 
 # -------------------------------------------------------------
-# 7. Expose Port 5000 Online (Localtunnel & Pinggy - No API Keys Needed)
+# 7. Expose Port 5000 Online (Multi-Tunnel: Cloudflare + Pinggy + Localtunnel)
 # -------------------------------------------------------------
 echo "--- [7/7] Exposing AI UI STUDIO Online ---"
 
-# Fetch password for Localtunnel (IP address)
-TUNNEL_PASS=$(curl -s https://loca.lt/mytunnelpassword || curl -s https://ipv4.icanhazip.com || echo "check public IP")
-
-# Try starting Pinggy via SSH in background (Zero password alternative)
-if command -v ssh >/dev/null 2>&1; then
-  ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:${PORT} -p 443 a.pinggy.io > pinggy.log 2>&1 &
-  sleep 3
-  PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pinggy\.link' pinggy.log | head -n1 || true)
-  if [ -n "$PINGGY_URL" ]; then
-    echo -e "\n****************************************************************"
-    echo -e "🎉 Pinggy URL (Direct, no password needed):"
-    echo -e "👉 ${PINGGY_URL}"
-    echo -e "****************************************************************\n"
-  fi
+# Install Cloudflared if missing
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "Installing Cloudflared..."
+  curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+  sudo dpkg -i cloudflared.deb > /dev/null 2>&1 || true
+  rm -f cloudflared.deb
 fi
 
+pkill -f "cloudflared tunnel" || true
+pkill -f "localtunnel" || true
+pkill -f "pinggy.io" || true
+sleep 1
+
+# Start Cloudflare Tunnel in background
+cloudflared tunnel --url "http://localhost:${PORT}" > cloudflared.log 2>&1 &
+
+# Start Pinggy via SSH in background
+if command -v ssh >/dev/null 2>&1; then
+  ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=10 -R0:localhost:${PORT} -p 443 a.pinggy.io > pinggy.log 2>&1 &
+fi
+
+# Fetch password for Localtunnel
+TUNNEL_PASS=$(curl -s https://loca.lt/mytunnelpassword || curl -s https://ipv4.icanhazip.com || echo "check public IP")
+
+# Wait up to 8 seconds for Cloudflare and Pinggy URLs
+echo "Generating secure tunnel links..."
+CF_URL=""
+for i in $(seq 1 8); do
+  CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflared.log 2>/dev/null | head -n1 || true)
+  if [ -n "$CF_URL" ]; then break; fi
+  sleep 1
+done
+
+PINGGY_URL=$(grep -oE 'https?://[a-zA-Z0-9.-]+pinggy\.link' pinggy.log 2>/dev/null | head -n1 || true)
+
 echo -e "\n=================================================="
-echo -e "Starting Localtunnel (No API Key Required)..."
-echo -e "Tunnel Password / IP: ${TUNNEL_PASS}"
+echo -e "🎉 AI UI STUDIO ACCESS URLS"
+echo -e "=================================================="
+if [ -n "$CF_URL" ]; then
+  echo -e "👉 Cloudflare URL (Recommended - Stable & never dies):"
+  echo -e "   $CF_URL"
+  echo -e ""
+fi
+if [ -n "$PINGGY_URL" ]; then
+  echo -e "👉 Pinggy URL (Direct, no password prompt):"
+  echo -e "   $PINGGY_URL"
+  echo -e ""
+fi
+echo -e "👉 Localtunnel URL (Starting below - Password: ${TUNNEL_PASS}):"
 echo -e "==================================================\n"
 
-# Run Localtunnel as primary tunnel
-npx --yes localtunnel --port ${PORT} 2>&1 | while read -r line; do
-  echo "$line"
-  if [[ "$line" =~ https://[a-zA-Z0-9-]+\.loca\.lt ]]; then
-    echo -e "\n"
-    echo -e "****************************************************************"
-    echo -e "🎉 AI UI STUDIO IS LIVE ONLINE!"
-    echo -e "👉 URL: ${BASH_REMATCH[0]}"
-    echo -e "🔑 Password (paste this on page): ${TUNNEL_PASS}"
-    echo -e "****************************************************************"
-    echo -e "\n"
-  fi
+# Run Localtunnel in a self-healing loop so it auto-reconnects if disconnected
+while true; do
+  npx --yes localtunnel --port ${PORT}
+  echo "⚠️ Localtunnel dropped. Reconnecting in 3s..."
+  sleep 3
 done
