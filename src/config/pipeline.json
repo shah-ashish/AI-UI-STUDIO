@@ -1,0 +1,17 @@
+{
+  "skills": [
+    "research_user_prompt",
+    "ui-design-plan",
+    "ui-code-generator"
+  ],
+  "tools": [
+    "web_search"
+  ],
+  "settings": {
+    "interactive": true,
+    "sequentialStages": true,
+    "saveHtmlOutput": true,
+    "outputDir": "output",
+    "maxToolSteps": 3
+  }
+}
