@@ -624,8 +624,8 @@ app.get('/api/preview/:sessionId', (req, res) => {
 const FRONTEND_DIST = path.join(ROOT_DIR, 'frontend', 'dist');
 if (fs.existsSync(FRONTEND_DIST)) {
   app.use(express.static(FRONTEND_DIST));
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) {
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) {
       return next();
     }
     res.sendFile(path.join(FRONTEND_DIST, 'index.html'));

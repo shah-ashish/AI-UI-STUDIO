@@ -168,32 +168,40 @@ else
 fi
 
 # -------------------------------------------------------------
-# 7. Install Cloudflared & Tunnel Port 5000 (Unified URL)
+# 7. Expose Port 5000 Online (Localtunnel & Pinggy - No API Keys Needed)
 # -------------------------------------------------------------
-echo "--- [7/7] Starting Cloudflared Tunnel for AI UI STUDIO ---"
-if ! command -v cloudflared >/dev/null 2>&1; then
-  echo "Installing Cloudflared..."
-  curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
-  sudo dpkg -i cloudflared.deb > /dev/null 2>&1 || true
-  rm -f cloudflared.deb
+echo "--- [7/7] Exposing AI UI STUDIO Online ---"
+
+# Fetch password for Localtunnel (IP address)
+TUNNEL_PASS=$(curl -s https://loca.lt/mytunnelpassword || curl -s https://ipv4.icanhazip.com || echo "check public IP")
+
+# Try starting Pinggy via SSH in background (Zero password alternative)
+if command -v ssh >/dev/null 2>&1; then
+  ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:${PORT} -p 443 a.pinggy.io > pinggy.log 2>&1 &
+  sleep 3
+  PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pinggy\.link' pinggy.log | head -n1 || true)
+  if [ -n "$PINGGY_URL" ]; then
+    echo -e "\n****************************************************************"
+    echo -e "🎉 Pinggy URL (Direct, no password needed):"
+    echo -e "👉 ${PINGGY_URL}"
+    echo -e "****************************************************************\n"
+  fi
 fi
 
-pkill -f "cloudflared tunnel" || true
-sleep 1
-
 echo -e "\n=================================================="
-echo -e "Connecting to Cloudflare network..."
+echo -e "Starting Localtunnel (No API Key Required)..."
+echo -e "Tunnel Password / IP: ${TUNNEL_PASS}"
 echo -e "==================================================\n"
 
-# Launch Cloudflare tunnel for Port 5000 and capture the public URL
-cloudflared tunnel --url "http://localhost:${PORT}" 2>&1 | while read -r line; do
+# Run Localtunnel as primary tunnel
+npx --yes localtunnel --port ${PORT} 2>&1 | while read -r line; do
   echo "$line"
-  if [[ "$line" =~ https://[a-zA-Z0-9-]+\.trycloudflare\.com ]]; then
+  if [[ "$line" =~ https://[a-zA-Z0-9-]+\.loca\.lt ]]; then
     echo -e "\n"
     echo -e "****************************************************************"
     echo -e "🎉 AI UI STUDIO IS LIVE ONLINE!"
-    echo -e "Open this URL in any browser:"
-    echo -e "👉 ${BASH_REMATCH[0]}"
+    echo -e "👉 URL: ${BASH_REMATCH[0]}"
+    echo -e "🔑 Password (paste this on page): ${TUNNEL_PASS}"
     echo -e "****************************************************************"
     echo -e "\n"
   fi
