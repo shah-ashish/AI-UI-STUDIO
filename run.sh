@@ -39,7 +39,7 @@ fi
 # -------------------------------------------------------------
 echo "--- [2/7] Installing System Utilities & Chromium Dependencies ---"
 if command -v apt-get >/dev/null 2>&1; then
-  sudo apt-get update -qq
+  sudo apt-get update -qq || true
   sudo apt-get install -y -qq zstd curl python3 git \
     ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \
     libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 \
